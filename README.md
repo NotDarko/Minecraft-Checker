@@ -1,166 +1,114 @@
-# Minecraft Account Checker  
-**Made By Darko (@3_1o)**
+# Minecraft Account Checker
+
+**Author:** NotDarko (original: @3_1o)
 
 ---
 
 ## Overview
 
-A tool for checking Microsoft/Xbox Game Pass accounts and checking Minecraft account features.  
-This utility is intended for security testing, data enrichment, and Minecraft-related account capture—not for unauthorized access or illegal activities.
+A multi-threaded checker that attempts Microsoft/Xbox login for email:password combos and enriches valid Minecraft accounts with profile and service data.
 
-**Key Features:**
-- Fast, multi-threaded checking of email:password combos
-- Supports HTTP, SOCKS4/5 proxies, and proxyless checking
-- Captures full account info: UUID, username, account type, cape status, Hypixel stats, name change eligibility, email access, bans, and more
-- Discord webhook notifications with detailed information
-- Modular config: control captures and notifications
-- Auto-creation of results directory and config file
-
----
-
-## Setup
-
-### Dependencies
-
-You'll need **Python 3.8+** and the following recommended setup:
-
-1. **Clone or download this repository.**
-
-2. **Install all required dependencies via requirements.txt**  
-   Run the following command in your project folder:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   This will automatically install the correct versions of:
-   - `colorama`
-   - `requests` (with SOCKS support)
-   - `urllib3`
-   - `configparser`
-   - `PySocks`
-   - The [pyCraft](https://github.com/ammaraskar/pyCraft) Minecraft networking library (installed directly from GitHub)
-
-**Note:**  
-- `requests[socks]` and `PySocks` are required for SOCKS proxy support.
-- The Minecraft protocol library is installed via the following line in `requirements.txt`:  
-  ```
-  git+https://github.com/ammaraskar/pyCraft.git
-  ```
-- You do **not** need to manually install modules like `python-socks` or `http.cookiejar` unless prompted by an error.
-- There is no need to install `minecraft-protocol` or the older `minecraft` libraries; all relevant Minecraft features use `pyCraft` as specified.
+Implemented features:
+- Microsoft/Xbox authentication to obtain a Minecraft access token
+- Entitlements check to determine account ownership type (Normal Minecraft / Game Pass / Game Pass Ultimate)
+- Minecraft profile fetch (username, UUID, capes)
+- Optional Hypixel stats scraping and SkyBlock networth lookup (EliteBot API)
+- Hypixel ban check via a pyCraft connection attempt
+- OptiFine cape check
+- Name-change eligibility check via Minecraft profile namechange endpoint
+- Discord webhook notifications (embed or plain content)
+- Proxy support: HTTP, SOCKS4, SOCKS5, or proxyless
+- Results saved to a timestamped session folder under `results/`
 
 ---
 
-If you have any install problems or a missing dependency error, try updating `pip` and `setuptools`:
-```bash
-pip install --upgrade pip setuptools
-```
+## Requirements
+
+- Python 3.8+
+- Third-party packages used by the code:
+  - `requests` (use `requests[socks]` if using SOCKS proxies)
+  - `PySocks` (`socks`)
+  - `colorama`
+  - `urllib3`
+  - `pyCraft` (the code imports `minecraft.networking.*` — if missing, install from https://github.com/ammaraskar/pyCraft.git)
+
+The script also uses standard library modules such as `configparser`, `threading`, `concurrent.futures`, `dataclasses`, `uuid`, `socket`, `json`, `time`, `datetime`, `urllib.parse`, `warnings`, and `http.cookiejar`.
 
 ---
 
 ## Configuration
 
-Upon first run, a file named `config.ini` is created automatically.  
-**Default webhook message includes all captured details.**  
-Modify settings in `config.ini` as needed for proxies, webhooks, and capture preferences.
+On first run the script will create a `config.ini`. The code reads the following keys:
 
-**Webhook Message Template (customizable in config file):**
-```
-New Hit!
-Email: <email>
-Password: <password>
-Username: <n>
-UUID: <uuid>
-Account Type: <type>
-Capes: <capes>
+[Settings]
+- `webhook` — Discord webhook URL to send hits to (if empty, no webhook is sent)
+- `embed` — True/False: whether to use Discord embed payloads
+- `max_retries` — integer: retry attempts for web requests during authentication
+- `webhook_message` — custom message template used when building webhook content (placeholders listed below)
 
---- Hypixel Stats ---
-Rank: <hypixel>
-Level: <level>
-First Login: <firstlogin>
-Last Login: <lastlogin>
-Bedwars Stars: <bedwarsstars>
-Skyblock Networth: <skyblockcoins>
+[Captures]
+- `hypixel_stats` — True/False: fetch Hypixel stats and attempt SkyBlock networth
+- `optifine_cape` — True/False: check for OptiFine cape
+- `name_change_info` — True/False: check name-change eligibility/date
+- `ban_check` — True/False: run Hypixel ban check using pyCraft
 
---- Account Info ---
-OptiFine Cape: <ofcape>
-Email Access: <access>
-Can Change Name: <namechange>
-Last Name Change: <lastchanged>
-Hypixel Ban Status: <banned>
-```
+Only the keys listed above are read by `mc.py`. Other keys that may appear in example configs or previous versions are not used by the current code and have been omitted here.
 
-## Placeholder meanings
+---
 
-Use these placeholders in your output format. They will automatically be replaced with the account’s info.
+## Webhook placeholders
 
-- `<email>` - Account email
-- `<password>` - Account password
-- `<n>` - Username / IGN
-- `<uuid>` - Minecraft UUID
-- `<type>` - Account type (Normal Minecraft, Game Pass, etc.)
-- `<capes>` - Capes detected (Minecon, Migrator, etc.)
+The webhook message template (`webhook_message`) and the embed builder replace these placeholders:
 
-### Hypixel placeholders
-- `<hypixel>` - Hypixel rank (VIP, MVP+, etc.)
-- `<level>` - Hypixel network level
-- `<firstlogin>` - Hypixel first login date/time
-- `<lastlogin>` - Hypixel last login date/time
-- `<bedwarsstars>` - BedWars stars
-- `<skyblockcoins>` - SkyBlock coins/purse amount
-
-### Extra placeholders
-- `<ofcape>` - OptiFine cape status (Yes / No / N/A)
-- `<namechange>` - Can change username (Yes / No / N/A)
-- `<lastchanged>` - Last name change date/time
-- `<banned>` - Banned status (ban / unbanned / unknown)
-
+- `<email>`
+- `<password>`
+- `<n>` (username / IGN)
+- `<uuid>`
+- `<type>` (account type determined from entitlements)
+- `<capes>`
+- `<hypixel>`
+- `<level>`
+- `<firstlogin>`
+- `<lastlogin>`
+- `<bedwarsstars>`
+- `<skyblockcoins>`
+- `<ofcape>`
+- `<namechange>`
+- `<lastchanged>`
+- `<banned>`
 
 ---
 
 ## Usage
 
-1. **Place combos**
-   - Add `email:password` combos to `combos.txt` (one per line).
+1. Put combos in `combos.txt` (one `email:password` per line).
 
-2. **Place proxies**
-   - For HTTP/SOCKS4/SOCKS5, add proxies to `proxies.txt` (one per line, e.g. `ip:port` or `user:pass@ip:port`).
+2. (Optional) Put proxies in `proxies.txt` (one per line). For Hypixel ban checks you can provide `ban_proxies.txt` (one per line).
 
-3. **Run**
+3. Run:
    ```bash
    python mc.py
    ```
-   - The script will prompt for the number of threads (e.g. 100).
-   - Choose proxy mode (HTTP, SOCKS4, SOCKS5, or proxyless).
-   - Checking will begin.
-   - Live statistics are shown in the console.
+   - Enter the number of threads when prompted.
+   - Choose proxy type (HTTP, SOCKS4, SOCKS5, or Proxyless).
 
-4. **Results**
-   - Hits, captures, and other files are saved to the `results/` directory.
+4. Results are saved to a session folder under `results/session_YYYY-MM-DD_HH-MM-SS/`. Files include:
+   - `hits.txt`
+   - `captures.txt`
+   - `banned.txt`
+   - `unbanned.txt`
+   - `game_pass.txt`, `game_pass_ultimate.txt`, `normal_minecraft.txt` (depending on account type)
 
----
-
-## Folder Structure
-
-- `combos.txt` — your email:password combos
-- `proxies.txt` — proxies list (if using)
-- `mc.py` — main file (checker)
-- `ban_proxies.txt` — optional, for Hypixel ban checks via proxy
-- `config.ini` — application config (auto-generated)
-- `results/`
-  - `hits.txt` — successful accounts
-  - `captures.txt` — full account captures
-  - `banned.txt` — banned accounts
-  - `unbanned.txt` — unbanned accounts
-  - `game_pass.txt`, `game_pass_ultimate.txt`, `normal_minecraft.txt` — by type
+Live console statistics (CPM, hits, invalids, 2FA, etc.) are displayed while the checker runs.
 
 ---
 
 ## Notes & Disclaimer
 
-- **For educational/ethical use only.** Do not use on accounts you do not own or have explicit permission to test.
-- Proxyless mode may result in higher error or rate limit.
-- Some features may change if endpoint responses or Minecraft APIs change.
-- Pull requests and improvements are welcome.
+- This project is provided for educational and ethical purposes only. It is NOT intended to be used for illegal activity or unauthorized access.
+- Use this tool only on accounts you own or for which you have explicit permission to test. Unauthorized use may be illegal and is strictly prohibited.
+- The code disables SSL verification on many requests (`verify=False`) and suppresses urllib3 warnings; this is how the script is written.
+- Hypixel ban checks and external API calls (EliteBot) are best-effort and may fail depending on network conditions or changes to external services.
 
 ---
 
